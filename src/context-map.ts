@@ -1,4 +1,10 @@
 import type { Context, Message, Tool } from "@earendil-works/pi-ai";
+import {
+  getInitialSystemMessage,
+  getCurrentTools,
+  withoutInitialSystemMessage,
+} from "@earendil-works/pi-ai/utils/transcript";
+import { getSystemMessageText } from "@earendil-works/pi-ai/utils/text";
 import { unpackThinkingSignature, type ChatThinking } from "./thinking.js";
 
 export interface ContentPart {
@@ -47,7 +53,14 @@ function userContent(content: Message["content"]): string | ContentPart[] {
 export function mapContextToChat(context: Context): MappedChat {
   const messages: ChatHistoryItem[] = [];
 
-  for (const message of context.messages) {
+  // normalizeContext() folds systemPrompt/tools into messages[0] (a system
+  // message) before the context reaches streamSimple. Read them back out.
+  const sysMsg = getInitialSystemMessage(context.messages);
+  const systemPrompt = context.systemPrompt || (sysMsg ? getSystemMessageText(sysMsg) : undefined);
+  const rawTools: Tool[] = context.tools ?? getCurrentTools(context.messages);
+  const chatMessages = sysMsg ? withoutInitialSystemMessage(context.messages) : context.messages;
+
+  for (const message of chatMessages) {
     if (message.role === "user") {
       messages.push({ role: "user", content: userContent(message.content) });
       continue;
@@ -103,11 +116,11 @@ export function mapContextToChat(context: Context): MappedChat {
     }
   }
 
-  const tools: ToolDef[] = (context.tools ?? []).map((tool: Tool) => ({
+  const tools: ToolDef[] = rawTools.map((tool: Tool) => ({
     name: tool.name,
     description: tool.description,
     parameters: tool.parameters,
   }));
 
-  return { systemPrompt: context.systemPrompt || undefined, messages, tools };
+  return { systemPrompt: systemPrompt || undefined, messages, tools };
 }
