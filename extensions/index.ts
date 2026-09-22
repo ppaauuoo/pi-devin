@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import type { Api, Model, OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
+import { registerApiProvider } from "@earendil-works/pi-ai/compat";
 import { authStatus, ensureCredentials, loginWithCli, readCredentials } from "../src/credentials.js";
 import { readDevinDesktopApiKey } from "../src/desktop-auth.js";
 import { whichDevin, devinVersion } from "../src/cli.js";
@@ -54,6 +55,10 @@ function registerDevinProvider(pi: ExtensionAPI, models: ProviderModelConfig[]):
     },
     streamSimple: streamDevin,
   });
+
+  // Also register in the global compat api-registry so tools that stream via
+  // @earendil-works/pi-ai/compat (e.g. pi-advisor-flow) can use devin models.
+  registerApiProvider({ api: "devin-local", stream: streamDevin, streamSimple: streamDevin }, "pi-devin");
 }
 
 export default async function (pi: ExtensionAPI): Promise<void> {
