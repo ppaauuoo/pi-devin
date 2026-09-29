@@ -13,20 +13,35 @@ import { fileURLToPath } from "node:url";
 
 const devinLocalRequire = createRequire(import.meta.url);
 const devinLocalDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const onDiskCompatPath = path.join(devinLocalDir, "..", "@earendil-works", "pi-ai", "dist", "compat.js");
-let registerApiProviderOnDisk: typeof registerApiProvider | null = null;
-try {
-  registerApiProviderOnDisk = devinLocalRequire(onDiskCompatPath).registerApiProvider;
-} catch {
-  // on-disk copy not present — virtual registration alone is fine
+// npm layout: sibling of this package. git-clone layout: vendored node_modules inside this package.
+// Last resort: the shared pi agent npm dir (where native-imported extensions resolve their pi-ai).
+const onDiskCompatCandidates = [
+  path.join(devinLocalDir, "..", "@earendil-works", "pi-ai", "dist", "compat.js"),
+  path.join(devinLocalDir, "node_modules", "@earendil-works", "pi-ai", "dist", "compat.js"),
+  path.join(devinLocalDir, "..", "..", "..", "..", "npm", "node_modules", "@earendil-works", "pi-ai", "dist", "compat.js"),
+];
+let registerApiProviderOnDisk: Array<typeof registerApiProvider> = [];
+let onDiskCompatError: Error | null = null;
+for (const candidate of onDiskCompatCandidates) {
+  try {
+    registerApiProviderOnDisk.push(devinLocalRequire(candidate).registerApiProvider);
+  } catch (error) {
+    onDiskCompatError = error instanceof Error ? error : new Error(String(error));
+  }
+}
+if (registerApiProviderOnDisk.length === 0 && onDiskCompatError) {
+  console.warn(`[pi-devin] could not load an on-disk @earendil-works/pi-ai compat copy (${onDiskCompatError.message}); registering only in the virtual registry`);
 }
 
 function registerDevinCompatEverywhere(provider: Parameters<typeof registerApiProvider>[0]): void {
   registerApiProvider(provider, "pi-devin");
-  try {
-    registerApiProviderOnDisk?.(provider, "pi-devin");
-  } catch {
-    // already registered or incompatible — ignore
+  for (const register of registerApiProviderOnDisk) {
+    try {
+      register(provider, "pi-devin");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[pi-devin] on-disk compat registration failed: ${message}`);
+    }
   }
 }
 import { authStatus, ensureCredentials, loginWithCli, readCredentials } from "../src/credentials.js";
