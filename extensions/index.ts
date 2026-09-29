@@ -1,6 +1,34 @@
 import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import type { Api, Model, OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 import { registerApiProvider } from "@earendil-works/pi-ai/compat";
+
+// pi loads extensions through jiti: TypeScript extensions get transpiled and their
+// "@earendil-works/pi-ai/compat" import maps to the bundle's virtual module, while plain .js
+// dist extensions (e.g. pi-advisor-flow) are native-imported and resolve the on-disk
+// @earendil-works/pi-ai copy — two separate provider registries. Register devin-local into the
+// on-disk copy too, resolved relative to this package, so both registries see it.
+import { createRequire } from "node:module";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const devinLocalRequire = createRequire(import.meta.url);
+const devinLocalDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const onDiskCompatPath = path.join(devinLocalDir, "..", "@earendil-works", "pi-ai", "dist", "compat.js");
+let registerApiProviderOnDisk: typeof registerApiProvider | null = null;
+try {
+  registerApiProviderOnDisk = devinLocalRequire(onDiskCompatPath).registerApiProvider;
+} catch {
+  // on-disk copy not present — virtual registration alone is fine
+}
+
+function registerDevinCompatEverywhere(provider: Parameters<typeof registerApiProvider>[0]): void {
+  registerApiProvider(provider, "pi-devin");
+  try {
+    registerApiProviderOnDisk?.(provider, "pi-devin");
+  } catch {
+    // already registered or incompatible — ignore
+  }
+}
 import { authStatus, ensureCredentials, loginWithCli, readCredentials } from "../src/credentials.js";
 import { readDevinDesktopApiKey } from "../src/desktop-auth.js";
 import { whichDevin, devinVersion } from "../src/cli.js";
@@ -58,7 +86,7 @@ function registerDevinProvider(pi: ExtensionAPI, models: ProviderModelConfig[]):
 
   // Also register in the global compat api-registry so tools that stream via
   // @earendil-works/pi-ai/compat (e.g. pi-advisor-flow) can use devin models.
-  registerApiProvider({ api: "devin-local", stream: streamDevin, streamSimple: streamDevin }, "pi-devin");
+  registerDevinCompatEverywhere({ api: "devin-local", stream: streamDevin, streamSimple: streamDevin });
 }
 
 export default async function (pi: ExtensionAPI): Promise<void> {
@@ -73,17 +101,6 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   } catch {
     // fallback models already registered
   }
-
-  pi.on("session_start", async () => {
-    try {
-      if (!_pi) return;
-      if (!(await ensureCredentials())) return;
-      const catalog = await loadCliCatalog();
-      registerDevinProvider(_pi, modelsFromCatalog(catalog));
-    } catch {
-      // keep current models
-    }
-  });
 
   pi.registerCommand("devin-status", {
     description: "Show Devin CLI auth + binary status",
